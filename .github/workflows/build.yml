@@ -7,211 +7,30 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  build-deb:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Get package version
+        id: version
+        run: |
+          VERSION=$(dpkg-parsechangelog -S Version)
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Package version: ${VERSION}"
+
+      - name: Build and deploy DEB
+        uses: ./.github/actions/deb-build
         with:
-          fetch-tags: true
-          fetch-depth: 0
-
-      - name: Install DEB build tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            dpkg-dev \
-            debhelper \
-            devscripts \
-            gnupg \
-            dpkg-sig
-
-      - name: Import GPG private key
-        if: env.HAS_GPG_KEY == 'true'
-        env:
-          HAS_GPG_KEY: ${{ secrets.DEB_GPG_PRIVATE_KEY != '' }}
-        run: |
-          echo "${{ secrets.DEB_GPG_PRIVATE_KEY }}" | gpg --import
-          echo "${{ secrets.DEB_GPG_PUBLIC_KEY }}" | gpg --import
-
-      - name: Build DEB package
-        id: deb
-        run: |
-          # Get package version from changelog
-          PACKAGE_VERSION=$(dpkg-parsechangelog -S Version)
-          PACKAGE_NAME=$(dpkg-parsechangelog -S Source)
-          
-          echo "Package: ${PACKAGE_NAME}"
-          echo "Version: ${PACKAGE_VERSION}"
-          
-          # Build the package
-          dpkg-buildpackage -us -uc -b
-          
-          # The .deb will be in the parent directory
-          DEB_FILE=$(ls ../*.deb | head -n1)
-          DEB_BASENAME=$(basename "${DEB_FILE}")
-          
-          echo "deb_file=${DEB_FILE}" >> $GITHUB_OUTPUT
-          echo "deb_basename=${DEB_BASENAME}" >> $GITHUB_OUTPUT
-          echo "package_version=${PACKAGE_VERSION}" >> $GITHUB_OUTPUT
-          echo "package_name=${PACKAGE_NAME}" >> $GITHUB_OUTPUT
-
-      - name: Sign DEB package
-        if: env.HAS_GPG_KEY == 'true'
-        env:
-          HAS_GPG_KEY: ${{ secrets.DEB_GPG_PRIVATE_KEY != '' }}
-        run: |
-          dpkg-sig --sign builder "${{ steps.deb.outputs.deb_file }}"
-
-      - name: Export GPG public key
-        if: env.HAS_GPG_KEY == 'true'
-        env:
-          HAS_GPG_KEY: ${{ secrets.DEB_GPG_PRIVATE_KEY != '' }}
-        run: |
-          gpg --export --armor > DEB-GPG-KEY.asc
-
-      - name: Checkout gh-pages branch
-        uses: actions/checkout@v4
-        with:
-          ref: gh-pages
-          path: gh-pages
-
-      - name: Create APT repository
-        run: |
-          # Create repository structure
-          mkdir -p ./apt-repo
-          
-          # Copy GPG key if it exists
-          if [ -f DEB-GPG-KEY.asc ]; then
-            cp DEB-GPG-KEY.asc ./apt-repo/
-          fi
-          
-          # Copy new DEB package
-          cp "${{ steps.deb.outputs.deb_file }}" ./apt-repo/
-          
-          # Copy old packages if they exist
-          if [ -d gh-pages ]; then
-            find gh-pages -name "*.deb" -exec cp {} ./apt-repo/ \; || true
-          fi
-          
-          # Create Packages file
-          cd ./apt-repo
-          dpkg-scanpackages . /dev/null > Packages
-          gzip -k -f Packages
-          
-          # Create Release file
-          cat > Release << EOF
-          Origin: hauke-cloud
-          Label: VyOS Customization
-          Suite: stable
-          Codename: stable
-          Architectures: all amd64
-          Components: main
-          Description: Custom VyOS packages
-          Date: $(date -Ru)
-          EOF
-          
-          # Add MD5, SHA1, SHA256 checksums
-          echo "MD5Sum:" >> Release
-          for file in Packages Packages.gz; do
-            if [ -f "$file" ]; then
-              echo " $(md5sum $file | awk '{print $1, $2}')" $(stat -c%s $file) $file >> Release
-            fi
-          done
-          
-          echo "SHA1:" >> Release
-          for file in Packages Packages.gz; do
-            if [ -f "$file" ]; then
-              echo " $(sha1sum $file | awk '{print $1, $2}')" $(stat -c%s $file) $file >> Release
-            fi
-          done
-          
-          echo "SHA256:" >> Release
-          for file in Packages Packages.gz; do
-            if [ -f "$file" ]; then
-              echo " $(sha256sum $file | awk '{print $1, $2}')" $(stat -c%s $file) $file >> Release
-            fi
-          done
-
-      - name: Sign Release file
-        if: env.HAS_GPG_KEY == 'true'
-        env:
-          HAS_GPG_KEY: ${{ secrets.DEB_GPG_PRIVATE_KEY != '' }}
-        run: |
-          cd ./apt-repo
-          gpg --clearsign -o InRelease Release
-          gpg --armor --detach-sign -o Release.gpg Release
-
-      - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v3
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: apt-repo/
-          keep_files: false
-
-      - name: Create README for repository
-        run: |
-          cd ./apt-repo
-          cat > README.md << 'EOF'
-          # VyOS Customization APT Repository
-          
-          This repository hosts Debian packages for VyOS customizations.
-          
-          ## Usage
-          
-          ### Add the repository
-          
-          ```bash
-          # Add the repository
-          echo "deb [trusted=yes] https://hauke-cloud.github.io/vyos-customization/ ./" | \
-            sudo tee /etc/apt/sources.list.d/vyos-customization.list
-          
-          # If GPG key is available
-          curl -fsSL https://hauke-cloud.github.io/vyos-customization/DEB-GPG-KEY.asc | \
-            sudo gpg --dearmor -o /usr/share/keyrings/vyos-customization.gpg
-          
-          # Then use with trusted GPG key
-          echo "deb [signed-by=/usr/share/keyrings/vyos-customization.gpg] https://hauke-cloud.github.io/vyos-customization/ ./" | \
-            sudo tee /etc/apt/sources.list.d/vyos-customization.list
-          ```
-          
-          ### Install packages
-          
-          ```bash
-          sudo apt-get update
-          sudo apt-get install vyos-customization
-          ```
-          
-          ## Integration with VyOS ISO Build
-          
-          Add this repository during the VyOS ISO build process:
-          
-          ```bash
-          # Create APT sources list
-          echo "deb [trusted=yes] https://hauke-cloud.github.io/vyos-customization/ ./" > \
-            vyos-build/data/live-build-config/includes.chroot/etc/apt/sources.list.d/vyos-customization.list
-          
-          # Add package to install list
-          echo "vyos-customization" >> \
-            vyos-build/data/live-build-config/package-lists/custom.list.chroot
-          ```
-          
-          ## Available Packages
-          
-          - **vyos-customization**: Custom configurations and scripts for VyOS
-          
-          ## Package Contents
-          
-          See the [main repository](https://github.com/hauke-cloud/vyos-customization) for details.
-          EOF
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ steps.deb.outputs.package_name }}-${{ steps.deb.outputs.package_version }}
-          path: |
-            ${{ steps.deb.outputs.deb_file }}
-            apt-repo/Packages
-            apt-repo/Release
-          retention-days: 30
+          package-name: vyos-customization
+          package-root: src
+          maintainer: Hauke Mettendorf <hauke@mettendorf.it>
+          version: ${{ steps.version.outputs.version }}
+          arch: all
+          description: "Custom configurations and scripts for VyOS"
+          homepage: https://github.com/${{ github.repository }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          gpg-private-key: ${{ secrets.DEB_GPG_PRIVATE_KEY || '' }}
+          gpg-public-key: ${{ secrets.DEB_GPG_PUBLIC_KEY || '' }}
