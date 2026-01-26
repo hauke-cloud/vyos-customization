@@ -1,0 +1,10 @@
+#!/bin/bash
+set -e
+
+if [ "$1" = "remove" ]; then
+    echo "Removing VyOS customization package"
+fi
+
+#DEBHELPER#
+
+exit 0

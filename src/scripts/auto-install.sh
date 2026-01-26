@@ -1,0 +1,69 @@
+#!/bin/bash
+# Automated VyOS installation script for Packer builds
+# This script is embedded in the custom ISO and performs non-interactive installation
+
+set -e
+
+echo "=== VyOS Automated Installation ==="
+echo "Starting automated installation to /dev/sda..."
+
+# Check if we're being run with the auto-install flag
+if [ "$1" != "--auto-install" ]; then
+    echo "This script is for automated installation only"
+    echo "Run with --auto-install flag"
+    exit 1
+fi
+
+# Find the install method
+if [ -f "/usr/libexec/vyos/op_mode/image_installer.py" ]; then
+    echo "Using Python image installer (VyOS 1.4+)"
+    
+    # Create a Python wrapper to handle non-interactive installation
+    python3 << 'PYTHON_EOF'
+import sys
+sys.path.insert(0, '/usr/libexec/vyos')
+
+from op_mode.image_installer import *
+
+# Override prompts to always return defaults
+def auto_yes(prompt, default=True):
+    return default
+
+def auto_input(prompt, default=""):
+    return default
+
+# Perform installation with automatic answers
+try:
+    target_disk = "/dev/sda"
+    print(f"Installing to {target_disk}")
+    
+    # Import and run installer with minimal prompts
+    # This uses the VyOS installer API directly
+    import subprocess
+    result = subprocess.run(
+        ["python3", "/usr/libexec/vyos/op_mode/image_installer.py", 
+         "install", "--target", target_disk],
+        input="yes\n\n\n\n",  # Answer yes to prompts
+        text=True,
+        capture_output=False
+    )
+    sys.exit(result.returncode)
+    
+except Exception as e:
+    print(f"Error: {e}")
+    sys.exit(1)
+PYTHON_EOF
+
+elif [ -f "/opt/vyatta/sbin/install-image" ]; then
+    echo "Using legacy install-image (VyOS 1.3 and earlier)"
+    
+    # Use the VYATTA_PROCESS_CLIENT trick for non-interactive mode
+    export VYATTA_PROCESS_CLIENT='gui2_rest'
+    /opt/vyatta/sbin/install-image
+    
+else
+    echo "ERROR: Cannot find VyOS installer"
+    exit 1
+fi
+
+echo "=== Installation Complete ==="

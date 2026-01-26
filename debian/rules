@@ -1,0 +1,11 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@
+
+override_dh_auto_install:
+	dh_auto_install
+	# Ensure scripts are executable
+	chmod +x debian/vyos-customization/usr/local/bin/vyos-auto-install || true
+	chmod +x debian/vyos-customization/usr/local/bin/generate-password.sh || true
+	chmod +x debian/vyos-customization/opt/vyatta/etc/install-image/postinst || true

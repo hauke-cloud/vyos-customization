@@ -1,0 +1,7 @@
+# VyOS configuration files
+src/config/config.boot.default opt/vyatta/etc/
+
+# VyOS installation scripts
+src/scripts/postinst opt/vyatta/etc/install-image/
+src/scripts/auto-install.sh usr/local/bin/vyos-auto-install
+src/scripts/generate-password.sh usr/local/bin/
