@@ -1,0 +1,13 @@
+Package: vyos-customization
+Version: 1.0.0-1
+Architecture: all
+Maintainer: Hauke Mettendorf <hauke@mettendorf.it>
+Installed-Size: 19
+Filename: pool/main/vyos-customization_1.0.0-1_all.deb
+Size: 3482
+MD5sum: 63e68bb0b0b72212af15b209f3d7503f
+SHA1: b9194ac0893efd3b2ad94a59539ecd1eb69f788d
+SHA256: 64061556079d9b5ebcf2cfcbac7a49ab58c77753d7efbbc5341611d7bb1da60c
+Homepage: https://github.com/hauke-cloud/vyos-customization
+Description: Custom configurations and scripts for VyOS
+

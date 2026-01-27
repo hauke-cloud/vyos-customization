@@ -1,0 +1,17 @@
+Origin: vyos-customization
+Label: vyos-customization
+Suite: stable
+Codename: stable
+Architectures: all
+Components: main
+Description: Custom configurations and scripts for VyOS
+Date: Tue, 27 Jan 2026 00:17:28 +0000
+MD5:
+ 766c6b1bd91233ac2571880c554f4cd4 477 main/binary-all/Packages
+ da9484bf20b6f0d4c2ba64b7f6ce4d49 357 main/binary-all/Packages.gz
+SHA1:
+ dac14e339fe9e2fe03d038700ed7e2b07d605659 477 main/binary-all/Packages
+ deeeef11f1c37380879499a36981b3160b54e05b 357 main/binary-all/Packages.gz
+SHA256:
+ f568df17897d71307e3b1ce7799e7be3b1efb76ebdab4f97112486efb4d00917 477 main/binary-all/Packages
+ 92036bd8b707573391bf34762ebf26dc7fa27381442499b7b06f8eb6c4d4fec0 357 main/binary-all/Packages.gz
