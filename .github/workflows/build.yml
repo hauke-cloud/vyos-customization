@@ -1,14 +1,16 @@
-name: Build and Deploy DEB Package
+name: Build and Release DEB Package
 
 on:
   push:
-    branches:
-      - main
+    tags:
+      - 'v*'
   workflow_dispatch:
 
 jobs:
   build-deb:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout code
@@ -21,16 +23,24 @@ jobs:
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "Package version: ${VERSION}"
 
-      - name: Build and deploy DEB
-        uses: ./.github/actions/deb-build
+      - name: Build DEB package
+        id: build_deb
+        uses: jiro4989/build-deb-action@v3
         with:
-          package-name: vyos-customization
-          package-root: src
+          package: vyos-customization
+          package_root: src
           maintainer: Hauke Mettendorf <hauke@mettendorf.it>
           version: ${{ steps.version.outputs.version }}
           arch: all
-          description: "Custom configurations and scripts for VyOS"
+          desc: "Custom configurations and scripts for VyOS"
           homepage: https://github.com/${{ github.repository }}
-          token: ${{ secrets.GITHUB_TOKEN }}
-          gpg-private-key: ${{ secrets.DEB_GPG_PRIVATE_KEY || '' }}
-          gpg-public-key: ${{ secrets.DEB_GPG_PUBLIC_KEY || '' }}
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: ${{ steps.build_deb.outputs.file_name }}
+          tag_name: ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
