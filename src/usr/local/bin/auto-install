@@ -14,8 +14,40 @@ if [ "$1" != "--auto-install" ]; then
   exit 1
 fi
 
+# Configuration variables (can be overridden via environment)
+TARGET_DISK="${TARGET_DISK:-/dev/sda}"
+VYOS_PASSWORD="${VYOS_PASSWORD:-vyos}"
+ROOT_SIZE_GB="${ROOT_SIZE_GB:-}"
+IMAGE_NAME="${IMAGE_NAME:-}"
+CONSOLE_TYPE="${CONSOLE_TYPE:-kvm}"
+
 # Find the install method
-if [ -f "/usr/libexec/vyos/op_mode/image_installer.py" ]; then
+if [ -f "/usr/libexec/vyos/op_mode/auto_image_installer.py" ]; then
+  echo "Using non-interactive Python image installer"
+  echo "Target disk: $TARGET_DISK"
+  echo "Console type: $CONSOLE_TYPE"
+
+  # Build command with arguments
+  CMD=("python3" "/usr/libexec/vyos/op_mode/auto_image_installer.py" 
+       "--action" "install"
+       "--no-prompt"
+       "--target-disk" "$TARGET_DISK"
+       "--vyos-password" "$VYOS_PASSWORD"
+       "--console-type" "$CONSOLE_TYPE")
+
+  # Add optional arguments if set
+  if [ -n "$ROOT_SIZE_GB" ]; then
+    CMD+=("--root-size-gb" "$ROOT_SIZE_GB")
+  fi
+
+  if [ -n "$IMAGE_NAME" ]; then
+    CMD+=("--image-name" "$IMAGE_NAME")
+  fi
+
+  # Run the installer
+  "${CMD[@]}"
+
+elif [ -f "/usr/libexec/vyos/op_mode/image_installer.py" ]; then
   echo "Using Python image installer (VyOS 1.4+)"
 
   # Create a Python wrapper to handle non-interactive installation
