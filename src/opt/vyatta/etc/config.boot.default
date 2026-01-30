@@ -48,5 +48,3 @@ service {
         port 22
     }
 }
-
-/* Add your custom configuration here */
