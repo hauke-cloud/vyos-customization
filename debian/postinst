@@ -3,7 +3,7 @@ set -e
 
 if [ "$1" = "configure" ]; then
   # Ensure scripts are executable
-  chmod +x src/usr/local/bin/auto-install 2>/dev/null || true
+  chmod +x src/usr/local/bin/install-image 2>/dev/null || true
 
   echo "VyOS customization package configured successfully"
 fi

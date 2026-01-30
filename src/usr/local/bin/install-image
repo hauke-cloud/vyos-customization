@@ -74,11 +74,15 @@ mkfs.ext4 -L persistence "$PART_ROOT"
 # Create mount points
 echo "Creating mount points..."
 mkdir -p "$DIR_DST_ROOT"
-mkdir -p "$DIR_DST_ROOT/boot/efi"
 
-# Mount partitions
+# Mount root partition first
 echo "Mounting partitions..."
 mount "$PART_ROOT" "$DIR_DST_ROOT"
+
+# Create EFI mount point after root is mounted
+mkdir -p "$DIR_DST_ROOT/boot/efi"
+
+# Mount EFI partition
 mount "$PART_EFI" "$DIR_DST_ROOT/boot/efi"
 
 # Create directory structure
@@ -142,16 +146,30 @@ echo "/ union" > "$DIR_DST_ROOT/persistence.conf"
 
 # Set up GRUB configuration
 echo "Installing GRUB configuration..."
-mkdir -p "$DIR_DST_ROOT/boot/grub"
 mkdir -p "$DIR_DST_ROOT/boot/grub/grub.cfg.d/vyos-versions"
 
 # Create main grub.cfg
 cat > "$DIR_DST_ROOT/boot/grub/grub.cfg" <<'GRUBEOF'
-source /boot/grub/grub.cfg.d/*.cfg
-source /boot/grub/grub.cfg.d/vyos-versions/*.cfg
+load_env
+insmod regexp
+
+for cfgfile in ${prefix}/grub.cfg.d/*-autoload.cfg
+do
+    source ${cfgfile}
+done
 GRUBEOF
 
-# Create GRUB variables file
+# Create GRUB header file (00-vyos-header.cfg)
+cat > "$DIR_DST_ROOT/boot/grub/grub.cfg.d/00-vyos-header.cfg" <<'GRUBEOF'
+set VYOS_CFG_VER=1
+GRUBEOF
+
+# Create GRUB modules file (10-vyos-modules-autoload.cfg)
+cat > "$DIR_DST_ROOT/boot/grub/grub.cfg.d/10-vyos-modules-autoload.cfg" <<'GRUBEOF'
+# modules are loaded automatically
+GRUBEOF
+
+# Create GRUB variables file (20-vyos-defaults-autoload.cfg)
 cat > "$DIR_DST_ROOT/boot/grub/grub.cfg.d/20-vyos-defaults-autoload.cfg" <<GRUBEOF
 set timeout=5
 set console_type=$CONSOLE_TYPE
@@ -161,13 +179,102 @@ set bootmode=normal
 set default=0
 GRUBEOF
 
-# Create GRUB menu entry
-BOOT_UUID=$(blkid -s UUID -o value "$PART_ROOT")
+# Create common configuration (25-vyos-common-autoload.cfg)
+cat > "$DIR_DST_ROOT/boot/grub/grub.cfg.d/25-vyos-common-autoload.cfg" <<'GRUBEOF'
+# load EFI video modules
+if [ "${grub_platform}" == "efi" ]; then
+    insmod efi_gop
+    insmod efi_uga
+fi
+
+# create and activate serial console
+function setup_serial {
+    # initialize the first serial port by default
+    if [ "${console_type}" == "ttyS" ]; then
+        if [ "${console_num}" == "0" ]; then
+          serial --unit=0 --speed=${console_speed}
+        else
+          serial --unit=${console_num} --speed=115200
+        fi
+    else
+        serial --unit=0 --speed=${console_speed}
+    fi
+    terminal_output --append serial console
+    terminal_input --append serial console
+}
+
+setup_serial
+GRUBEOF
+
+# Create menu configuration (40-vyos-menu-autoload.cfg)
+cat > "$DIR_DST_ROOT/boot/grub/grub.cfg.d/40-vyos-menu-autoload.cfg" <<'GRUBEOF'
+for cfgfile in ${config_directory}/vyos-versions/*.cfg
+do
+    source "${cfgfile}"
+done
+source ${config_directory}/50-vyos-options.cfg
+GRUBEOF
+
+# Create boot options menu (50-vyos-options.cfg)
+cat > "$DIR_DST_ROOT/boot/grub/grub.cfg.d/50-vyos-options.cfg" <<'GRUBEOF'
+submenu "Boot options" {
+    submenu "Select boot mode" {
+        menuentry "Normal" {
+            set bootmode="normal"
+            export bootmode
+            configfile ${prefix}/grub.cfg.d/*vyos-menu*.cfg
+        }
+        menuentry "Password reset" {
+            set bootmode="pw_reset"
+            export bootmode
+            configfile ${prefix}/grub.cfg.d/*vyos-menu*.cfg
+        }
+        menuentry "System recovery" {
+            set bootmode="recovery"
+            export bootmode
+            configfile ${prefix}/grub.cfg.d/*vyos-menu*.cfg
+        }
+    }
+    submenu "Select console type" {
+        menuentry "tty (graphical)" {
+            set console_type="tty"
+            export console_type
+            configfile ${prefix}/grub.cfg.d/*vyos-menu*.cfg
+        }
+        menuentry "ttyS (serial)" {
+            set console_type="ttyS"
+            export console_type
+            setup_serial
+            configfile ${prefix}/grub.cfg.d/*vyos-menu*.cfg
+        }
+    }
+    menuentry "Current: boot mode: ${bootmode}, console: ${console_type}${console_num}" {
+        echo
+    }
+}
+GRUBEOF
+
+# Generate UUID for the image
+IMAGE_UUID=$(python3 -c "import uuid; print('uuid5-' + str(uuid.uuid5(uuid.NAMESPACE_URL, '$IMAGE_NAME')))")
+
+# Create GRUB menu entry for the image
 cat > "$DIR_DST_ROOT/boot/grub/grub.cfg.d/vyos-versions/${IMAGE_NAME}.cfg" <<GRUBEOF
-menuentry "$IMAGE_NAME" {
-    search --no-floppy --set=root --fs-uuid $BOOT_UUID
-    linux /boot/$IMAGE_NAME/vmlinuz boot=live rootdelay=5 noautologin net.ifnames=0 biosdevname=0 vyos-union=/boot/$IMAGE_NAME console=\${console_type}\${console_num},\${console_speed}n8
-    initrd /boot/$IMAGE_NAME/initrd.img
+menuentry "$IMAGE_NAME" --id $IMAGE_UUID {
+    set boot_opts="boot=live rootdelay=5 noautologin net.ifnames=0 biosdevname=0 vyos-union=/boot/$IMAGE_NAME"
+    if [ "\${console_type}" == "ttyS" ]; then
+        set console_opts="console=\${console_type}\${console_num},\${console_speed}"
+    else
+        set console_opts="console=\${console_type}\${console_num}"
+    fi
+    if [ "\${bootmode}" == "pw_reset" ]; then
+        set boot_opts="\${boot_opts} \${console_opts} init=/usr/libexec/vyos/system/standalone_root_pw_reset"
+    elif [ "\${bootmode}" == "recovery" ]; then
+        set boot_opts="\${boot_opts} \${console_opts} init=/usr/bin/busybox init"
+    else
+        set boot_opts="\${boot_opts} \${console_opts}"
+    fi
+    linux "/boot/$IMAGE_NAME/vmlinuz" \${boot_opts}
+    initrd "/boot/$IMAGE_NAME/initrd.img"
 }
 GRUBEOF
 
