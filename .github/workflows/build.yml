@@ -34,7 +34,6 @@ jobs:
           arch: all
           desc: "Custom configurations and scripts for VyOS"
           homepage: https://github.com/${{ github.repository }}
-          depends: "cloud-init"
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
