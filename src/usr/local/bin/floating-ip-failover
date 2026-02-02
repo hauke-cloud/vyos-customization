@@ -17,12 +17,44 @@ else
   exit 1
 fi
 
-if [ -f "$CONFIG_DIR/server_id" ]; then
+# Get server ID from Hetzner API by hostname
+get_server_id() {
+  local hostname=$(hostname)
+  logger -t vrrp-failover "Looking up server ID for hostname: $hostname"
+
+  response=$(curl -s -X GET \
+    -H "Authorization: Bearer $HCLOUD_TOKEN" \
+    "https://api.hetzner.cloud/v1/servers?name=$hostname")
+
+  if echo "$response" | grep -q '"error"'; then
+    logger -t vrrp-failover "ERROR: Failed to query servers from API: $response"
+    return 1
+  fi
+
+  server_id=$(echo "$response" | grep -o '"id":[0-9]*' | head -1 | cut -d':' -f2)
+
+  if [ -z "$server_id" ]; then
+    logger -t vrrp-failover "ERROR: Could not find server ID for hostname $hostname"
+    return 1
+  fi
+
+  echo "$server_id"
+  return 0
+}
+
+# Try to get server ID from API first, fallback to file if it exists
+ROUTER_ID=$(get_server_id)
+if [ -z "$ROUTER_ID" ] && [ -f "$CONFIG_DIR/server_id" ]; then
+  logger -t vrrp-failover "Failed to get server ID from API, falling back to file"
   ROUTER_ID=$(cat "$CONFIG_DIR/server_id" | tr -d '[:space:]')
-else
-  logger -t vrrp-failover "ERROR: $CONFIG_DIR/server_id not found"
+fi
+
+if [ -z "$ROUTER_ID" ]; then
+  logger -t vrrp-failover "ERROR: Could not determine server ID"
   exit 1
 fi
+
+logger -t vrrp-failover "Using server ID: $ROUTER_ID"
 
 if [ -f "$CONFIG_DIR/floating_ip_ids" ]; then
   FLOATING_IP_IDS=$(cat "$CONFIG_DIR/floating_ip_ids" | tr -d '[:space:]')
@@ -45,13 +77,13 @@ fi
 assign_floating_ip() {
   local fip_id="$1"
   logger -t vrrp-failover "Assigning floating IP $fip_id to server $ROUTER_ID..."
-  
+
   response=$(curl -s -X POST \
     -H "Authorization: Bearer $HCLOUD_TOKEN" \
     -H "Content-Type: application/json" \
     -d "{\"server\": $ROUTER_ID}" \
     "https://api.hetzner.cloud/v1/floating_ips/$fip_id/actions/assign")
-  
+
   if echo "$response" | grep -q '"error"'; then
     logger -t vrrp-failover "ERROR: Failed to assign floating IP $fip_id: $response"
     return 1
@@ -61,7 +93,7 @@ assign_floating_ip() {
   fi
 }
 
-IFS=',' read -ra FIP_ARRAY <<< "$FLOATING_IP_IDS"
+IFS=',' read -ra FIP_ARRAY <<<"$FLOATING_IP_IDS"
 for fip_id in "$${FIP_ARRAY[@]}"; do
   fip_id=$(echo "$fip_id" | xargs)
   if [ -n "$fip_id" ]; then
