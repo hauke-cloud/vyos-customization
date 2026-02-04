@@ -1,0 +1,104 @@
+#!/bin/bash
+# Hetzner Alias IP Failover Script for VRRP
+set -e
+
+# Read configuration from /etc/hetzner
+CONFIG_DIR="/etc/hetzner"
+
+if [ ! -d "$CONFIG_DIR" ]; then
+  logger -t vrrp-failover "ERROR: Configuration directory $CONFIG_DIR does not exist"
+  exit 1
+fi
+
+if [ -f "$CONFIG_DIR/token" ]; then
+  HCLOUD_TOKEN=$(cat "$CONFIG_DIR/token" | tr -d '[:space:]')
+else
+  logger -t vrrp-failover "ERROR: $CONFIG_DIR/token not found"
+  exit 1
+fi
+
+# Get server ID from Hetzner API by hostname
+get_server_id() {
+  local hostname=$(hostname)
+  logger -t vrrp-failover "Looking up server ID for hostname: $hostname"
+
+  response=$(curl -s -X GET \
+    -H "Authorization: Bearer $HCLOUD_TOKEN" \
+    "https://api.hetzner.cloud/v1/servers?name=$hostname")
+
+  if echo "$response" | grep -q '"error"'; then
+    logger -t vrrp-failover "ERROR: Failed to query servers from API: $response"
+    return 1
+  fi
+
+  server_id=$(echo "$response" | grep -o '"id":[0-9]*' | head -1 | cut -d':' -f2)
+
+  if [ -z "$server_id" ]; then
+    logger -t vrrp-failover "ERROR: Could not find server ID for hostname $hostname"
+    return 1
+  fi
+
+  echo "$server_id"
+  return 0
+}
+
+# Try to get server ID from API first, fallback to file if it exists
+ROUTER_ID=$(get_server_id)
+if [ -z "$ROUTER_ID" ] && [ -f "$CONFIG_DIR/server_id" ]; then
+  logger -t vrrp-failover "Failed to get server ID from API, falling back to file"
+  ROUTER_ID=$(cat "$CONFIG_DIR/server_id" | tr -d '[:space:]')
+fi
+
+if [ -z "$ROUTER_ID" ]; then
+  logger -t vrrp-failover "ERROR: Could not determine server ID"
+  exit 1
+fi
+
+logger -t vrrp-failover "Using server ID: $ROUTER_ID"
+
+if [ -f "$CONFIG_DIR/alias_ips" ]; then
+  ALIAS_IPS=$(cat "$CONFIG_DIR/alias_ips" | tr -d '[:space:]')
+else
+  logger -t vrrp-failover "ERROR: $CONFIG_DIR/alias_ips not found"
+  exit 1
+fi
+
+TYPE="$1"
+NAME="$2"
+STATE="$3"
+
+logger -t vrrp-failover "VRRP Transition - Type: $TYPE, Name: $NAME, State: $STATE"
+
+if [ "$STATE" != "MASTER" ]; then
+  logger -t vrrp-failover "Not MASTER state, skipping alias IP reassignment"
+  exit 0
+fi
+
+assign_alias_ip() {
+  local alias_ip="$1"
+  logger -t vrrp-failover "Assigning alias IP $alias_ip to server $ROUTER_ID..."
+
+  response=$(curl -s -X POST \
+    -H "Authorization: Bearer $HCLOUD_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "{\"ip\": \"$alias_ip\", \"server\": $ROUTER_ID}" \
+    "https://api.hetzner.cloud/v1/servers/$ROUTER_ID/actions/change_alias_ips")
+
+  if echo "$response" | grep -q '"error"'; then
+    logger -t vrrp-failover "ERROR: Failed to assign alias IP $alias_ip: $response"
+    return 1
+  else
+    logger -t vrrp-failover "Successfully assigned alias IP $alias_ip"
+    return 0
+  fi
+}
+
+IFS=',' read -ra ALIAS_ARRAY <<<"$ALIAS_IPS"
+for alias_ip in "${ALIAS_ARRAY[@]}"; do
+  alias_ip=$(echo "$alias_ip" | xargs)
+  if [ -n "$alias_ip" ]; then
+    assign_alias_ip "$alias_ip" || logger -t vrrp-failover "Warning: Failed to assign alias IP $alias_ip"
+  fi
+done
+
+logger -t vrrp-failover "Alias IP failover completed"
