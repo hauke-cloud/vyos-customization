@@ -14,7 +14,7 @@ fi
 logger -t transit-failover "VRRP Master transition for group: $VRRP_GROUP"
 
 # Configuration paths
-CONFIG_DIR="/config/scripts"
+CONFIG_DIR="/config"
 HETZNER_CONFIG_DIR="/etc/hetzner"
 
 # Read Hetzner API token
