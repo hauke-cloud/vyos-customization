@@ -11,7 +11,7 @@ set -e
 IMAGE_NAME="${IMAGE_NAME:-VyOS-1.5}"
 DISK="${DISK:-/dev/sda}"
 PASSWORD="${PASSWORD:-vyos}"
-CONSOLE_TYPE="${CONSOLE_TYPE:-tty}"  # tty for KVM, ttyS for serial
+CONSOLE_TYPE="${CONSOLE_TYPE:-tty}" # tty for KVM, ttyS for serial
 DIR_INSTALLATION="/mnt/installation"
 DIR_DST_ROOT="${DIR_INSTALLATION}/disk_dst"
 DIR_KERNEL_SRC="/boot/"
@@ -19,8 +19,8 @@ FILE_ROOTFS_SRC="/usr/lib/live/mount/medium/live/filesystem.squashfs"
 
 # Check if running in live mode
 if [ ! -f "$FILE_ROOTFS_SRC" ]; then
-    echo "Error: The system is already installed. Please use 'add system image' instead."
-    exit 1
+  echo "Error: The system is already installed. Please use 'add system image' instead."
+  exit 1
 fi
 
 echo "VyOS Image Installation"
@@ -36,22 +36,17 @@ rm -rf "$DIR_INSTALLATION"
 
 # Create partition table
 echo "Creating partition table on $DISK..."
-# Clean up the disk
-for part in "${DISK}"*[0-9]; do
-    [ -e "$part" ] && wipefs -af "$part" 2>/dev/null || true
-done
 wipefs -af "$DISK" 2>/dev/null || true
-sgdisk -Z "$DISK"
 
 # Create partitions:
 # 1: BIOS boot partition (2048-4095 sectors)
 # 2: EFI system partition (4096 + 256MB)
 # 3: Root partition (rest of disk)
 sgdisk -a1 \
-    -n1:2048:4095 -t1:EF02 \
-    -n2:4096:+256M -t2:EF00 \
-    -n3:0:0 -t3:8300 \
-    "$DISK"
+  -n1:2048:4095 -t1:EF02 \
+  -n2:4096:+256M -t2:EF00 \
+  -n3:0:0 -t3:8300 \
+  "$DISK"
 
 # Update kernel partition table
 sync
@@ -60,11 +55,11 @@ sleep 2
 
 # Determine partition names
 if [[ "$DISK" == *"nvme"* ]] || [[ "$DISK" == *"mmcblk"* ]]; then
-    PART_EFI="${DISK}p2"
-    PART_ROOT="${DISK}p3"
+  PART_EFI="${DISK}p2"
+  PART_ROOT="${DISK}p3"
 else
-    PART_EFI="${DISK}2"
-    PART_ROOT="${DISK}3"
+  PART_EFI="${DISK}2"
+  PART_ROOT="${DISK}3"
 fi
 
 echo "Creating filesystems..."
@@ -96,28 +91,28 @@ chmod 2775 "$DIR_DST_ROOT/boot/$IMAGE_NAME/rw/opt/vyatta/etc/config"
 # Copy system image and kernel files
 echo "Copying system image files..."
 if [ -d "$DIR_KERNEL_SRC" ]; then
-    for file in "$DIR_KERNEL_SRC"/*; do
-        if [ -f "$file" ]; then
-            cp "$file" "$DIR_DST_ROOT/boot/$IMAGE_NAME/"
-        fi
-    done
+  for file in "$DIR_KERNEL_SRC"/*; do
+    if [ -f "$file" ]; then
+      cp "$file" "$DIR_DST_ROOT/boot/$IMAGE_NAME/"
+    fi
+  done
 fi
 
 if [ -f "$FILE_ROOTFS_SRC" ]; then
-    cp "$FILE_ROOTFS_SRC" "$DIR_DST_ROOT/boot/$IMAGE_NAME/${IMAGE_NAME}.squashfs"
+  cp "$FILE_ROOTFS_SRC" "$DIR_DST_ROOT/boot/$IMAGE_NAME/${IMAGE_NAME}.squashfs"
 else
-    echo "Error: Root filesystem not found at $FILE_ROOTFS_SRC"
-    exit 1
+  echo "Error: Root filesystem not found at $FILE_ROOTFS_SRC"
+  exit 1
 fi
 
 # Create default configuration
 echo "Creating default configuration..."
 if [ -f "/opt/vyatta/etc/config.boot.default" ]; then
-    cp "/opt/vyatta/etc/config.boot.default" \
-       "$DIR_DST_ROOT/boot/$IMAGE_NAME/rw/opt/vyatta/etc/config/config.boot"
+  cp "/opt/vyatta/etc/config.boot.default" \
+    "$DIR_DST_ROOT/boot/$IMAGE_NAME/rw/opt/vyatta/etc/config/config.boot"
 else
-    # Create minimal config
-    cat > "$DIR_DST_ROOT/boot/$IMAGE_NAME/rw/opt/vyatta/etc/config/config.boot" <<EOF
+  # Create minimal config
+  cat >"$DIR_DST_ROOT/boot/$IMAGE_NAME/rw/opt/vyatta/etc/config/config.boot" <<EOF
 system {
     host-name vyos
     login {
@@ -133,23 +128,23 @@ fi
 
 # Set password (encrypt it properly)
 if command -v python3 >/dev/null 2>&1; then
-    ENCRYPTED_PASSWORD=$(python3 -c "import crypt; print(crypt.crypt('$PASSWORD', crypt.METHOD_SHA512))")
-    # Update config with encrypted password
-    sed -i "s|encrypted-password \".*\"|encrypted-password \"$ENCRYPTED_PASSWORD\"|" \
-        "$DIR_DST_ROOT/boot/$IMAGE_NAME/rw/opt/vyatta/etc/config/config.boot"
+  ENCRYPTED_PASSWORD=$(python3 -c "import crypt; print(crypt.crypt('$PASSWORD', crypt.METHOD_SHA512))")
+  # Update config with encrypted password
+  sed -i "s|encrypted-password \".*\"|encrypted-password \"$ENCRYPTED_PASSWORD\"|" \
+    "$DIR_DST_ROOT/boot/$IMAGE_NAME/rw/opt/vyatta/etc/config/config.boot"
 fi
 
 touch "$DIR_DST_ROOT/boot/$IMAGE_NAME/rw/opt/vyatta/etc/config/.vyatta_config"
 
 # Create persistence.conf
-echo "/ union" > "$DIR_DST_ROOT/persistence.conf"
+echo "/ union" >"$DIR_DST_ROOT/persistence.conf"
 
 # Set up GRUB configuration
 echo "Installing GRUB configuration..."
 mkdir -p "$DIR_DST_ROOT/boot/grub/grub.cfg.d/vyos-versions"
 
 # Create main grub.cfg
-cat > "$DIR_DST_ROOT/boot/grub/grub.cfg" <<'GRUBEOF'
+cat >"$DIR_DST_ROOT/boot/grub/grub.cfg" <<'GRUBEOF'
 load_env
 insmod regexp
 
@@ -160,17 +155,17 @@ done
 GRUBEOF
 
 # Create GRUB header file (00-vyos-header.cfg)
-cat > "$DIR_DST_ROOT/boot/grub/grub.cfg.d/00-vyos-header.cfg" <<'GRUBEOF'
+cat >"$DIR_DST_ROOT/boot/grub/grub.cfg.d/00-vyos-header.cfg" <<'GRUBEOF'
 set VYOS_CFG_VER=1
 GRUBEOF
 
 # Create GRUB modules file (10-vyos-modules-autoload.cfg)
-cat > "$DIR_DST_ROOT/boot/grub/grub.cfg.d/10-vyos-modules-autoload.cfg" <<'GRUBEOF'
+cat >"$DIR_DST_ROOT/boot/grub/grub.cfg.d/10-vyos-modules-autoload.cfg" <<'GRUBEOF'
 # modules are loaded automatically
 GRUBEOF
 
 # Create GRUB variables file (20-vyos-defaults-autoload.cfg)
-cat > "$DIR_DST_ROOT/boot/grub/grub.cfg.d/20-vyos-defaults-autoload.cfg" <<GRUBEOF
+cat >"$DIR_DST_ROOT/boot/grub/grub.cfg.d/20-vyos-defaults-autoload.cfg" <<GRUBEOF
 set timeout=5
 set console_type=$CONSOLE_TYPE
 set console_num=0
@@ -180,7 +175,7 @@ set default=0
 GRUBEOF
 
 # Create common configuration (25-vyos-common-autoload.cfg)
-cat > "$DIR_DST_ROOT/boot/grub/grub.cfg.d/25-vyos-common-autoload.cfg" <<'GRUBEOF'
+cat >"$DIR_DST_ROOT/boot/grub/grub.cfg.d/25-vyos-common-autoload.cfg" <<'GRUBEOF'
 # load EFI video modules
 if [ "${grub_platform}" == "efi" ]; then
     insmod efi_gop
@@ -207,7 +202,7 @@ setup_serial
 GRUBEOF
 
 # Create menu configuration (40-vyos-menu-autoload.cfg)
-cat > "$DIR_DST_ROOT/boot/grub/grub.cfg.d/40-vyos-menu-autoload.cfg" <<'GRUBEOF'
+cat >"$DIR_DST_ROOT/boot/grub/grub.cfg.d/40-vyos-menu-autoload.cfg" <<'GRUBEOF'
 for cfgfile in ${config_directory}/vyos-versions/*.cfg
 do
     source "${cfgfile}"
@@ -216,7 +211,7 @@ source ${config_directory}/50-vyos-options.cfg
 GRUBEOF
 
 # Create boot options menu (50-vyos-options.cfg)
-cat > "$DIR_DST_ROOT/boot/grub/grub.cfg.d/50-vyos-options.cfg" <<'GRUBEOF'
+cat >"$DIR_DST_ROOT/boot/grub/grub.cfg.d/50-vyos-options.cfg" <<'GRUBEOF'
 submenu "Boot options" {
     submenu "Select boot mode" {
         menuentry "Normal" {
@@ -258,7 +253,7 @@ GRUBEOF
 IMAGE_UUID=$(python3 -c "import uuid; print('uuid5-' + str(uuid.uuid5(uuid.NAMESPACE_URL, '$IMAGE_NAME')))")
 
 # Create GRUB menu entry for the image
-cat > "$DIR_DST_ROOT/boot/grub/grub.cfg.d/vyos-versions/${IMAGE_NAME}.cfg" <<GRUBEOF
+cat >"$DIR_DST_ROOT/boot/grub/grub.cfg.d/vyos-versions/${IMAGE_NAME}.cfg" <<GRUBEOF
 menuentry "$IMAGE_NAME" --id $IMAGE_UUID {
     set boot_opts="boot=live rootdelay=5 noautologin net.ifnames=0 biosdevname=0 vyos-union=/boot/$IMAGE_NAME"
     if [ "\${console_type}" == "ttyS" ]; then
@@ -282,25 +277,25 @@ GRUBEOF
 echo "Installing GRUB bootloader..."
 # For BIOS mode
 if [ "$(uname -m)" = "x86_64" ]; then
-    grub-install --no-floppy --target=i386-pc \
-        --boot-directory="$DIR_DST_ROOT/boot" "$DISK" --force
+  grub-install --no-floppy --target=i386-pc \
+    --boot-directory="$DIR_DST_ROOT/boot" "$DISK" --force
 fi
 
 # For UEFI mode
 if [ "$(uname -m)" = "x86_64" ]; then
-    grub-install --no-floppy --recheck --target=x86_64-efi \
-        --force-extra-removable \
-        --boot-directory="$DIR_DST_ROOT/boot" \
-        --efi-directory="$DIR_DST_ROOT/boot/efi" \
-        --bootloader-id="VyOS" \
-        --uefi-secure-boot
+  grub-install --no-floppy --recheck --target=x86_64-efi \
+    --force-extra-removable \
+    --boot-directory="$DIR_DST_ROOT/boot" \
+    --efi-directory="$DIR_DST_ROOT/boot/efi" \
+    --bootloader-id="VyOS" \
+    --uefi-secure-boot
 elif [ "$(uname -m)" = "aarch64" ]; then
-    grub-install --no-floppy --recheck --target=arm64-efi \
-        --force-extra-removable \
-        --boot-directory="$DIR_DST_ROOT/boot" \
-        --efi-directory="$DIR_DST_ROOT/boot/efi" \
-        --bootloader-id="VyOS" \
-        --uefi-secure-boot
+  grub-install --no-floppy --recheck --target=arm64-efi \
+    --force-extra-removable \
+    --boot-directory="$DIR_DST_ROOT/boot" \
+    --efi-directory="$DIR_DST_ROOT/boot/efi" \
+    --bootloader-id="VyOS" \
+    --uefi-secure-boot
 fi
 
 # Sync and unmount
