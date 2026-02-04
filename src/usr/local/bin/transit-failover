@@ -1,0 +1,309 @@
+#!/bin/bash
+# VRRP Master Transition Script for Hetzner Cloud
+# Handles both Floating IP and Alias IP failover
+# Usage: transit-failover <VRRP_GROUP_NAME>
+set -euo pipefail
+
+VRRP_GROUP="$1"
+
+if [ -z "$VRRP_GROUP" ]; then
+  logger -s -t transit-failover "ERROR: VRRP group name not provided"
+  exit 1
+fi
+
+logger -t transit-failover "VRRP Master transition for group: $VRRP_GROUP"
+
+# Configuration paths
+CONFIG_DIR="/config/scripts"
+HETZNER_CONFIG_DIR="/etc/hetzner"
+
+# Read Hetzner API token
+if [ -f "$HETZNER_CONFIG_DIR/token" ]; then
+  HCLOUD_TOKEN=$(cat "$HETZNER_CONFIG_DIR/token" | tr -d '[:space:]')
+else
+  logger -s -t transit-failover "ERROR: $HETZNER_CONFIG_DIR/token not found"
+  exit 1
+fi
+
+if [ -z "$HCLOUD_TOKEN" ]; then
+  logger -s -t transit-failover "ERROR: Hetzner API token is empty"
+  exit 1
+fi
+
+# Get server ID from Hetzner API by hostname
+get_server_id() {
+  local hostname=$(hostname)
+  logger -t transit-failover "Looking up server ID for hostname: $hostname"
+
+  local response=$(curl -s -w "\n%{http_code}" -X GET \
+    -H "Authorization: Bearer $HCLOUD_TOKEN" \
+    "https://api.hetzner.cloud/v1/servers?name=$hostname")
+
+  local http_code=$(echo "$response" | tail -n1)
+  local body=$(echo "$response" | sed '$d')
+
+  if [ "$http_code" != "200" ]; then
+    logger -t transit-failover "ERROR: Failed to query servers from API (HTTP $http_code): $body"
+    return 1
+  fi
+
+  if echo "$body" | grep -q '"error"'; then
+    logger -t transit-failover "ERROR: API returned error: $body"
+    return 1
+  fi
+
+  local server_id=$(echo "$body" | grep -o '"id":[0-9]*' | head -1 | cut -d':' -f2)
+
+  if [ -z "$server_id" ]; then
+    logger -t transit-failover "ERROR: Could not find server ID for hostname $hostname"
+    return 1
+  fi
+
+  echo "$server_id"
+  return 0
+}
+
+# Try to get server ID from API first, fallback to file if it exists
+ROUTER_ID=$(get_server_id)
+if [ -z "$ROUTER_ID" ] && [ -f "$HETZNER_CONFIG_DIR/server_id" ]; then
+  logger -t transit-failover "Failed to get server ID from API, falling back to file"
+  ROUTER_ID=$(cat "$HETZNER_CONFIG_DIR/server_id" | tr -d '[:space:]')
+fi
+
+if [ -z "$ROUTER_ID" ]; then
+  logger -s -t transit-failover "ERROR: Could not determine server ID"
+  exit 1
+fi
+
+logger -t transit-failover "Using server ID: $ROUTER_ID"
+
+# Verify floating IP assignment
+verify_floating_ip_assignment() {
+  local fip_id="$1"
+  local max_attempts=10
+  local attempt=1
+  
+  logger -t transit-failover "Verifying floating IP $fip_id assignment..."
+  
+  while [ $attempt -le $max_attempts ]; do
+    sleep 2
+    
+    local response=$(curl -s -w "\n%{http_code}" -X GET \
+      -H "Authorization: Bearer $HCLOUD_TOKEN" \
+      "https://api.hetzner.cloud/v1/floating_ips/$fip_id")
+    
+    local http_code=$(echo "$response" | tail -n1)
+    local body=$(echo "$response" | sed '$d')
+    
+    if [ "$http_code" = "200" ]; then
+      local assigned_server=$(echo "$body" | grep -o '"server":[0-9]*' | head -1 | cut -d':' -f2)
+      
+      if [ "$assigned_server" = "$ROUTER_ID" ]; then
+        logger -t transit-failover "Floating IP $fip_id successfully verified on server $ROUTER_ID"
+        return 0
+      fi
+    fi
+    
+    logger -t transit-failover "Floating IP $fip_id verification attempt $attempt/$max_attempts..."
+    attempt=$((attempt + 1))
+  done
+  
+  logger -t transit-failover "ERROR: Failed to verify floating IP $fip_id assignment after $max_attempts attempts"
+  return 1
+}
+
+# Assign floating IPs
+assign_floating_ips() {
+  local config_file="$CONFIG_DIR/${VRRP_GROUP}.floating_ips"
+  
+  if [ ! -f "$config_file" ]; then
+    logger -t transit-failover "No floating IP configuration found at $config_file, skipping"
+    return 0
+  fi
+
+  local floating_ip_ids=$(cat "$config_file" | tr -d '[:space:]')
+  
+  if [ -z "$floating_ip_ids" ]; then
+    logger -t transit-failover "Floating IP configuration is empty, skipping"
+    return 0
+  fi
+
+  logger -t transit-failover "Processing floating IPs from $config_file"
+
+  local failed_count=0
+  IFS=',' read -ra FIP_ARRAY <<<"$floating_ip_ids"
+  for fip_id in "${FIP_ARRAY[@]}"; do
+    fip_id=$(echo "$fip_id" | xargs)
+    if [ -n "$fip_id" ]; then
+      logger -t transit-failover "Assigning floating IP $fip_id to server $ROUTER_ID..."
+
+      local response=$(curl -s -w "\n%{http_code}" -X POST \
+        -H "Authorization: Bearer $HCLOUD_TOKEN" \
+        -H "Content-Type: application/json" \
+        -d "{\"server\": $ROUTER_ID}" \
+        "https://api.hetzner.cloud/v1/floating_ips/$fip_id/actions/assign")
+
+      local http_code=$(echo "$response" | tail -n1)
+      local body=$(echo "$response" | sed '$d')
+
+      if [ "$http_code" = "201" ] && ! echo "$body" | grep -q '"error"'; then
+        logger -t transit-failover "Floating IP $fip_id assignment initiated"
+        
+        if verify_floating_ip_assignment "$fip_id"; then
+          logger -t transit-failover "Successfully assigned floating IP $fip_id"
+        else
+          logger -s -t transit-failover "ERROR: Failed to verify floating IP $fip_id assignment"
+          failed_count=$((failed_count + 1))
+        fi
+      else
+        logger -s -t transit-failover "ERROR: Failed to assign floating IP $fip_id (HTTP $http_code): $body"
+        failed_count=$((failed_count + 1))
+      fi
+    fi
+  done
+  
+  if [ $failed_count -gt 0 ]; then
+    logger -s -t transit-failover "ERROR: $failed_count floating IP(s) failed to assign"
+    return 1
+  fi
+  
+  return 0
+}
+
+# Verify alias IP assignment
+verify_alias_ip_assignment() {
+  local alias_ip="$1"
+  local max_attempts=10
+  local attempt=1
+  
+  logger -t transit-failover "Verifying alias IP $alias_ip assignment..."
+  
+  while [ $attempt -le $max_attempts ]; do
+    sleep 2
+    
+    local response=$(curl -s -w "\n%{http_code}" -X GET \
+      -H "Authorization: Bearer $HCLOUD_TOKEN" \
+      "https://api.hetzner.cloud/v1/servers/$ROUTER_ID")
+    
+    local http_code=$(echo "$response" | tail -n1)
+    local body=$(echo "$response" | sed '$d')
+    
+    if [ "$http_code" = "200" ]; then
+      # Check if the alias IP is in the server's alias IPs list
+      if echo "$body" | grep -q "\"$alias_ip\""; then
+        logger -t transit-failover "Alias IP $alias_ip successfully verified on server $ROUTER_ID"
+        return 0
+      fi
+    fi
+    
+    logger -t transit-failover "Alias IP $alias_ip verification attempt $attempt/$max_attempts..."
+    attempt=$((attempt + 1))
+  done
+  
+  logger -t transit-failover "ERROR: Failed to verify alias IP $alias_ip assignment after $max_attempts attempts"
+  return 1
+}
+
+# Assign alias IPs
+assign_alias_ips() {
+  local config_file="$CONFIG_DIR/${VRRP_GROUP}.alias_ips"
+  
+  if [ ! -f "$config_file" ]; then
+    logger -t transit-failover "No alias IP configuration found at $config_file, skipping"
+    return 0
+  fi
+
+  local alias_ips=$(cat "$config_file" | tr -d '[:space:]')
+  
+  if [ -z "$alias_ips" ]; then
+    logger -t transit-failover "Alias IP configuration is empty, skipping"
+    return 0
+  fi
+
+  logger -t transit-failover "Processing alias IPs from $config_file"
+
+  local failed_count=0
+  IFS=',' read -ra ALIAS_ARRAY <<<"$alias_ips"
+  for alias_ip in "${ALIAS_ARRAY[@]}"; do
+    alias_ip=$(echo "$alias_ip" | xargs)
+    if [ -n "$alias_ip" ]; then
+      logger -t transit-failover "Assigning alias IP $alias_ip to server $ROUTER_ID..."
+
+      local response=$(curl -s -w "\n%{http_code}" -X POST \
+        -H "Authorization: Bearer $HCLOUD_TOKEN" \
+        -H "Content-Type: application/json" \
+        -d "{\"ip\": \"$alias_ip\", \"server\": $ROUTER_ID}" \
+        "https://api.hetzner.cloud/v1/servers/$ROUTER_ID/actions/change_alias_ips")
+
+      local http_code=$(echo "$response" | tail -n1)
+      local body=$(echo "$response" | sed '$d')
+
+      if [ "$http_code" = "201" ] && ! echo "$body" | grep -q '"error"'; then
+        logger -t transit-failover "Alias IP $alias_ip assignment initiated"
+        
+        if verify_alias_ip_assignment "$alias_ip"; then
+          logger -t transit-failover "Successfully assigned alias IP $alias_ip"
+        else
+          logger -s -t transit-failover "ERROR: Failed to verify alias IP $alias_ip assignment"
+          failed_count=$((failed_count + 1))
+        fi
+      else
+        logger -s -t transit-failover "ERROR: Failed to assign alias IP $alias_ip (HTTP $http_code): $body"
+        failed_count=$((failed_count + 1))
+      fi
+    fi
+  done
+  
+  if [ $failed_count -gt 0 ]; then
+    logger -s -t transit-failover "ERROR: $failed_count alias IP(s) failed to assign"
+    return 1
+  fi
+  
+  return 0
+}
+
+# Configure VRRP private IP address
+configure_vrrp_ip() {
+  local config_file="$CONFIG_DIR/${VRRP_GROUP}.vrrp_ip"
+  
+  if [ ! -f "$config_file" ]; then
+    logger -t transit-failover "No VRRP IP configuration found at $config_file, skipping"
+    return 0
+  fi
+
+  local vrrp_ip=$(cat "$config_file" | tr -d '[:space:]')
+  
+  if [ -z "$vrrp_ip" ]; then
+    logger -t transit-failover "VRRP IP configuration is empty, skipping"
+    return 0
+  fi
+
+  logger -t transit-failover "VRRP IP configuration: $vrrp_ip (configured externally)"
+  # Note: VRRP IP is typically managed by VRRP itself, this is informational
+  return 0
+}
+
+# Execute failover actions
+logger -t transit-failover "Starting failover process for group $VRRP_GROUP"
+
+EXIT_CODE=0
+
+configure_vrrp_ip || EXIT_CODE=$?
+
+if ! assign_floating_ips; then
+  logger -s -t transit-failover "WARNING: Floating IP assignment had failures"
+  EXIT_CODE=1
+fi
+
+if ! assign_alias_ips; then
+  logger -s -t transit-failover "WARNING: Alias IP assignment had failures"
+  EXIT_CODE=1
+fi
+
+if [ $EXIT_CODE -eq 0 ]; then
+  logger -t transit-failover "Failover process completed successfully for group $VRRP_GROUP"
+else
+  logger -s -t transit-failover "ERROR: Failover process completed with errors for group $VRRP_GROUP"
+fi
+
+exit $EXIT_CODE
