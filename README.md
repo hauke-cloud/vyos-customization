@@ -1,89 +1,97 @@
-# VyOS Customization Package
+<!-- llm-readme-management spec=1 commit=0a51a9ca9de64d2324b201be6a94f9b5be916b95 template=default model=qwen3.6-35b-a3b digest=598d66067ca0 generated=2026-09-09T00:19:21Z -->
+<a href="https://hauke.cloud" target="_blank"><img src="https://img.shields.io/badge/home-hauke.cloud-brightgreen" alt="hauke.cloud" style="display: block;" /></a>
+<a href="https://github.com/hauke-cloud" target="_blank"><img src="https://img.shields.io/badge/github-hauke.cloud-blue" alt="hauke.cloud Github Organisation" style="display: block;" /></a>
+<a href="https://github.com/hauke-cloud/llm-readme-management" target="_blank"><img src="https://img.shields.io/badge/template-default-orange" alt="Repository type - default" style="display: block;" /></a>
 
-This repository contains a Debian package with custom configurations and scripts for VyOS.
 
-## Package Structure
+# Vyos Customization
 
-The package installs:
-- Custom systemd services and timers (`/usr/lib/systemd/system/`)
-- Helper scripts (`/usr/bin/` or `/usr/local/bin/`)
-- Default VyOS configuration (`/opt/vyatta/etc/config.boot.default`)
-- Post-installation hook (`/opt/vyatta/etc/install-image/postinst`)
 
-## Building the Package
+<img src="https://raw.githubusercontent.com/hauke-cloud/.github/main/resources/img/organisation-logo-small.png" alt="hauke.cloud logo" width="109" height="123" align="right">
 
-### Local Build
 
+<llm header>
+
+This repository provides a Debian package that ships custom default configuration files and an automated disk installer for VyOS appliances. It produces a ready-to-install `.deb` archive containing predefined networking, SSH, NTP, and console settings. You should keep reading if you are an operator or build-pipeline author provisioning VyOS systems and need to automate initial appliance configuration.
+
+</llm>
+
+
+## :book: Description
+
+<llm description>
+
+This repository provides a Debian package that automates the initial configuration and disk installation of VyOS appliances. When provisioning fresh VyOS systems, you need to apply predefined networking, SSH, NTP, console, and syslog settings before the first boot. The package ships a default `config.boot.default` file that applies these settings immediately upon startup, removing the need for manual post-installation configuration.
+
+To streamline deployment in automated workflows, the package also includes an `install-image` helper script. This script non-interactively converts a live VyOS ISO into a bootable disk image by partitioning the target drive, copying the kernel and root filesystem, configuring GRUB for BIOS and UEFI targets, and setting up overlay persistence.
+
+- Ships a default `config.boot.default` file with predefined hostname, credentials, WAN DHCP, SSH, NTP, console, and syslog settings.
+- Provides an automated `install-image` script that partitions disks, installs GRUB, and configures persistence for the root filesystem.
+- Bundles all files into a standard Debian package for straightforward integration into Packer or custom build pipelines.
+
+</llm>
+
+
+## 🚀 Getting started
+
+<llm getting_started hint="Assume nothing about the ecosystem beyond what the analysis names. If the repository has no build step, say what a reader does with it instead.">
+
+1. Clone the repository and enter its directory.
 ```bash
-# Install build dependencies
+git clone https://github.com/hauke-cloud/vyos-customization.git
+cd vyos-customization
+```
+2. Install the required build dependencies on your Debian-derived system.
+```bash
 sudo apt-get install -y dpkg-dev debhelper
-
-# Build the package
+```
+3. Build the architecture-independent `.deb` package in the parent directory.
+```bash
 dpkg-buildpackage -us -uc -b
-
-# The .deb file will be created in the parent directory
 ```
 
-### GitHub Actions Build
+</llm>
 
-The package is automatically built and published to GitHub Pages on every push to main:
-- DEB packages are stored in the APT repository at `https://<org>.github.io/vyos-customization/`
-- GPG-signed for verification
 
-## Using in VyOS ISO Build
+## :airplane: Usage
 
-Add the following to your VyOS ISO build process:
+<llm usage>
 
-```bash
-# Add custom APT repository
-echo "deb [trusted=yes] https://hauke-cloud.github.io/vyos-customization/ ./" > \
-  vyos-build/data/live-build-config/includes.chroot/etc/apt/sources.list.d/vyos-customization.list
+- **Build locally:** On a Debian-derived system, install the required dependencies and compile the package:
+  ```bash
+  sudo apt-get install -y dpkg-dev debhelper
+  dpkg-buildpackage -us -uc -b
+  ```
+  This produces the `.deb` file in the parent directory.
 
-# Install the package during build
-echo "vyos-customization" >> vyos-build/data/live-build-config/package-lists/custom.list.chroot
-```
+- **Publish via CI:** You trigger automated builds by pushing a `v*` tag or dispatching the workflow manually. The workflow extracts the version from `debian/changelog`, builds the package with `jiro4989/build-deb-action@v3`, and publishes it as a GitHub Release artifact via `softprops/action-gh-release@v1`.
 
-## Package Contents
+- **Run the disk installer:** Once the package is installed on a target VyOS system, you execute the non-interactive installer script. It reads configuration from environment variables:
+  ```bash
+  export IMAGE_NAME="VyOS-1.5"
+  export DISK="/dev/sda"
+  export PASSWORD="vyos"
+  export CONSOLE_TYPE="tty"
+  sudo /usr/local/bin/install-image
+  ```
+  The script partitions the target disk, copies the kernel and rootfs, generates GRUB menu entries with normal, password-reset, and recovery boot options, and installs GRUB to i386-pc, x86_64-efi, or arm64-efi targets.
 
-### VyOS Configuration
-- `config.boot.default` - Default VyOS configuration for new installations
-  - Located at: `/opt/vyatta/etc/config.boot.default`
-  - Sets hostname, basic networking, SSH, NTP, etc.
+</llm>
 
-### Installation Scripts
-- `postinst` - Post-installation hook for VyOS image install
-  - Located at: `/opt/vyatta/etc/install-image/postinst`
-  - Runs after VyOS is installed to disk
-  - Handles persistence configuration and upgrades
 
-- `auto-install.sh` - Automated installation script for Packer builds
-  - Located at: `/usr/local/bin/vyos-auto-install`
-  - Non-interactive VyOS installation to /dev/sda
-  - Used by Packer for automated ISO-based installs
+## 📄 License
 
-### Helper Scripts
-- `generate-password.sh` - Password generation helper
-  - Located at: `/usr/local/bin/generate-password.sh`
-  - Generates encrypted passwords for VyOS users
+This Project is licensed under the GNU General Public License v3.0
 
-## Version Management
+- see the [LICENSE](LICENSE) file for details.
 
-Version is defined in `debian/changelog`. Update it with:
 
-```bash
-dch -i  # Interactive changelog editor
-# or
-dch -v 1.0.1-1 "New release message"
-```
+## :coffee: Contributing
 
-## Development
+To become a contributor, please check out the [CONTRIBUTING](CONTRIBUTING.md) file.
 
-1. Add your files to `src/` directory
-2. Update `debian/install` to specify where files should be installed
-3. Update `debian/changelog` with version and changes
-4. Build and test the package locally
-5. Push to GitHub - CI will build and publish automatically
 
-## License
+## :email: Contact
 
-GNU General Public License v3.0
+For any inquiries or support requests, please open an issue in this
+repository or contact us at [contact@hauke.cloud](mailto:contact@hauke.cloud).
